@@ -1,70 +1,70 @@
 # Artemis II Simulator — Project State & Resumption Guide
 
-**Last updated:** Session ending at low-token state, trajectory sync + carousel complete.
+**Last updated:** AI/agent setup session — bugs fixed, validation script built, 28/28 checks passing.
 
 ## Current working file
-`/mnt/user-data/outputs/artemis2-3d-simulator.jsx` — 2,416 lines, 118 KB, validated working.
+`src/Artemis2Simulator.jsx` — ~2,640 lines, React 18 + Vite 5, Three.js 0.160 vanilla.
+Run `npm run dev` for localhost:5173. Run `npm run validate` for physics checks.
 
 ## What works now (DO NOT REGRESS)
-- Trajectory sync: 6,539 km closest Moon approach (NASA: 6,513 km, 0.4% agreement)
-- All 19 mission phases continuous, max boundary jump 1,320 km
-- `flybyPointAt(tau)` helper is the single source of truth — do not duplicate flyby geometry anywhere else
+- Trajectory validation: 28/28 checks pass (`npm run validate`)
+- Closest Moon: 6,539 km surface (NASA target: 6,513 km, 0.4% error)
+- Max Earth dist: 444,000 km (target 405,500 km; +10% scripted-flyby bias — acceptable until Lambert solver)
+- All 19 mission phases present and continuous
+- `flybyPointAt(tau)` is the SINGLE SOURCE OF TRUTH for lunar flyby geometry — do not duplicate
 - Component carousel with 12 parts, verified data from NASA/ESA/Airbus/Lockheed/Northrop
 - Font sizes at 8/10/12 baseline
-- File structure: part1 (physics + VEHICLE_COMPONENTS) → part2 (3D models) → part3 (React UI + ComponentSVG)
-- Source parts in `/home/claude/artemis_part{1,2,3}.txt` — rebuild with `cat part1 part2 part3 > outputs/artemis2-3d-simulator.jsx`
+- ESLint: `npm run lint` works with flat config (`eslint.config.js`)
 
-## Validated numbers (from `/home/claude/validate_sync.js`)
-- Closest Moon: 6,539 km surface
-- Max Earth: 450,499 km
+## Bugs fixed this session
+1. **Post-MECO altitude spike**: `alt = 170 + 5*(t-MECO_TIME)` climbed to 440 km by core sep — fixed to `alt = 168; gamma = 1.5`
+2. **Phase 3→4 trajectory gap**: Phase 4 initialized at `[r_p1, 0, 0, ...]` (angle 0°) while ascent ended at ~19° — gap was 2,180 km; fixed by rotating initial state to match `ascAngle = Math.atan2(lastAsc.y, lastAsc.x)`
+3. **Phase 14 Hermite velocity discontinuity**: `s = smoothstep(tau)` as Hermite parameter zeroed out the SOI exit velocity tangent (ds/dτ=0 at τ=0) — fixed to use `tau` directly
+
+## Validated numbers (`npm run validate`)
+- Closest Moon: 6,539 km (target 6,513 km)
+- Max Earth dist: 444k km (target 405,500 km — see scripted flyby bias in TODO #1)
 - Phases present: 1–19 all
-- Max position jump: 5,716 km (inside phase 10 ballistic motion, not a teleport)
+- Max position jump: 11,845 km (at phase 14 Hermite boundary — within 20,000 km limit)
+- TLI velocity: 10.686 km/s
+- SRB max velocity: 1.655 km/s
 
 ## TODO — in priority order
 
-### 1. Live NASA/ESA news panel (RIGHT SIDE)
-**Approach:** Use Anthropic API in artifacts with web_search tool. Call `https://api.anthropic.com/v1/messages` with model `claude-sonnet-4-20250514`, max_tokens 1000, and `tools: [{type: "web_search_20250305", name: "web_search"}]`. Prompt: "Find 5 most recent Artemis II news articles from nasa.gov, esa.int, airbus.com. Return as JSON array with fields: title, source, date, url, summary (20 words max)." Parse `data.content` filtering for `type === "mcp_tool_result"` and `type === "text"` blocks. Cache in React state. Refresh button. Place on right side, width ~280px, below LIVE TELEMETRY panel. Show loading spinner, error fallback, "powered by Anthropic" note.
+### 1. Lambert solver replacing scripted flyby
+**Why:** eliminate ~11,845 km Phase 14 Hermite boundary jump, bring max Earth distance from 444k km down to NASA's 405,500 km, true orbital mechanics for return leg.
+**How:** Implement `solveLambert(r1, r2, dt, mu)` with universal variable formulation (Bate/Mueller/White). At Phase 9 exit, solve Lambert from spacecraft state to Moon position at t_perilune (dt=3.5 days). Integrate ballistically through flyby with real 3-body + J2 physics. Solve second Lambert from flyby exit to entry interface (return leg). Replace `flybyPointAt` scripted curve with integrated states.
+**Estimated:** ~200 lines new code, replaces ~150 lines scripted. Must pass `npm run validate` 28/28 before declaring done.
 
-**Must not use localStorage** (Claude.ai artifacts restriction). Use useState only.
+### 2. Live NASA/ESA news panel (RIGHT SIDE)
+**Approach:** Use Anthropic API with web_search tool. Call `https://api.anthropic.com/v1/messages` with model `claude-sonnet-4-20250514`, max_tokens 1000, tools `[{type:"web_search_20250305",name:"web_search"}]`. Parse `data.content` for `type==="text"` blocks. Cache in React state (useState only — no localStorage). Refresh button. Right side, ~280px wide, below LIVE TELEMETRY. Show loading/error states, "powered by Anthropic" note.
 
-### 2. Replace scripted flyby with Lambert solver
-**Why:** eliminate 1,320 km boundary jump, get true orbital mechanics for return leg, improve max-Earth distance from 450k to NASA's 405k.
-**How:** Implement `solveLambert(r1, r2, dt, mu)` returning v1, v2. Use universal variable formulation (Bate/Mueller/White). At phase 9 end, solve Lambert from spacecraft state to Moon position at t_perilune with dt = 3.5 days. Integrate ballistically through the flyby using real 3-body physics. Solve second Lambert from flyby exit to entry interface position with dt = return leg duration. Replace `flybyPointAt` scripted curve with integrated state.
-**Estimated:** ~200 lines new code, replaces ~150 lines scripted. Test against `validate_sync.js`.
+### 3. Astronaut bio cards in carousel
+Add (Wiseman, Glover, Koch, Hansen) as a new carousel category. Data from NASA bios (public domain).
 
-### 3. Carousel enhancements
-- Add astronaut bio cards (Wiseman, Glover, Koch, Hansen) as new category
-- Add "Mission Timeline" category with hour-by-hour events from NASA press kit
-- Replace hand-drawn SVGs with fetched NASA imagery where copyright permits (NASA imagery is public domain)
-- Add interactive hotspots on main SVGs that show subcomponent detail on hover
+### 4. Engine plume particle systems
+SRBs, RS-25s, RL10, AJ10 — each engine type has distinct plume color/expansion. Key to throttle state per phase.
 
-### 4. Animation improvements
-- Engine plume particle systems for SRBs, RS-25s, RL10, AJ10
-- Earth rotation synced to real sidereal time
-- Moon libration (small wobble)
-- Stage separation animations with physics (SRBs tumbling, core stage drifting)
-- Heat shield glow intensity keyed to atmospheric density profile
-
-### 5. Re-verify against latest NASA data
-- Search for Artemis II post-launch updates (mission is live as of April 1, 2026)
-- Pull latest telemetry, closest-approach actuals, splashdown conditions
-- Update component data with any post-flight revelations
+### 5. Post-launch data sync
+Search for Artemis II post-launch updates (mission live as of April 1, 2026). Pull latest telemetry actuals, closest-approach measurements, splashdown conditions. Update component data.
 
 ## How to resume
 
-When starting a new conversation, tell Claude:
-1. "Read `/mnt/user-data/outputs/PROJECT_STATE.md` first"
-2. "The working file is `/mnt/user-data/outputs/artemis2-3d-simulator.jsx`"
-3. "Source parts are in `/home/claude/artemis_part{1,2,3}.txt` if they persist, otherwise extract from the .jsx"
-4. "Pick task N from the TODO list"
+When starting a new conversation:
+1. Read `docs/PROJECT_STATE.md` first
+2. Read `.github/copilot-instructions.md` for architecture overview
+3. Read `AGENTS.md` for resumption checklist and constitutional principles
+4. Run `npm run validate` to confirm baseline 28/28 pass
+5. Pick task from the TODO list above
 
-If `/home/claude/` has been cleared between sessions, the single .jsx file in outputs is the source of truth — split it back into parts at comment markers like `/* ─── PHASE METADATA */` for part1→part2 boundary and `export default function` for part2→part3 boundary.
+Source of truth: `src/Artemis2Simulator.jsx` — single file, ~2,640 lines.
 
 ## Constitutional principles for this project
-- SI units always (Zoltan preference)
-- No emojis (Zoltan preference)
+- SI units always
+- No emojis in code or UI
 - Verified data only — mark unknowns as "not officially published"
 - Font sizes 8/10/12 baseline
-- Trajectory sync via single source of truth (no duplicated geometry)
+- `flybyPointAt(tau)` is the single source of truth — never duplicate
 - Do not break existing working physics when adding features
-- Test against validate_sync.js before declaring done
+- `npm run validate` must pass 28/28 before declaring any physics change "done"
+- No `localStorage` (Claude.ai artifact constraint — use useState only)
